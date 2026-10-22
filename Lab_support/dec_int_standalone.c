@@ -1,13 +1,13 @@
 #include <stdio.h>
 
-#define M 2    // downsampling factor
-#define L 2    // upsampling factor
+#define M 4    // downsampling factor
+#define L 4    // upsampling factor
 #define LEN 30
 #define ADC0 0
 #define ADC1 1
 
 // Global variable declaration
-short int g_PolyW[M]={0,0}; // downsampled polyphase values
+short int g_PolyW[M]={0,0,0,0}; // downsampled polyphase values
 short int g_PolyWUpdate=0;   // last polyphase updated
 short int g_i16AdcData[2]={0,0};  // 2 x 16 bit data of ADC input channels
 short int g_i16DacData[2]={0,0};; // 2 x 16 bit data of DAC output  channels
@@ -36,6 +36,14 @@ void adcInt(void) {
         g_PolyW[1] = g_i16AdcData[ADC0];
         g_PolyWUpdate = 1;
         break;
+     case 2:
+        g_PolyW[2] = g_i16AdcData[ADC0];
+        g_PolyWUpdate = 2;
+        break;
+     case 3:
+        g_PolyW[3] = g_i16AdcData[ADC0];
+        g_PolyWUpdate = 3;
+        break;
     default:
         break;
     }
@@ -53,6 +61,14 @@ void dacInt(void) {
     case 1:
         g_i16DacData[0] = 0;
         g_i16DacData[1] = g_PolyW[1];
+        break;
+     case 2:
+        g_i16DacData[0] = 0;
+        g_i16DacData[1] = g_PolyW[2];
+        break;
+     case 3:
+        g_i16DacData[0] = 0;
+        g_i16DacData[1] = g_PolyW[3];
         break;
     default:
         break;
