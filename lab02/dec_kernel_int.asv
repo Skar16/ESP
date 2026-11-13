@@ -1,0 +1,264 @@
+% dec_kernel_int_WS20_EMIL.m
+%
+% US 30-Jul-06, 06-Nov-20
+%
+% This version is the starter version for the MES LAB
+% 
+% designs a filter according to specification done in Lab assignment
+%
+clear
+close('all');
+format compact
+Fs = 50e3;
+F_DSP = 456e6;
+
+% create a frequency vector
+freq=(1:999)/2000;
+
+% stop-band attentuation is in DB, convert to linear for REMEZ
+delta_stop_dB = 40;
+delta_stop = dbinv(-delta_stop_dB);
+% for pass-band
+delta_pass = 0.01;
+delta_stop = 0.01;
+
+% edge frequencies
+fpass =  2700; 
+fstop = 2900; 
+
+% determine N_FIR and the coefficients using REMEZ ("normal" FIR filter)
+[N_FIR,fo,mo,w] = firpmord( [fpass fstop], [1 0], [delta_pass delta_stop], Fs );
+% for safety reasons, add 2 to N_FIR to achieve the stop-band attenuation for sure
+N_FIR = N_FIR + 2;
+b_FIR = firpm(N_FIR,fo,mo,w);
+
+% compute the amplitude response using frequency vector
+hz = freqz(b_FIR,1, 2*pi*freq);
+
+fprintf('\n N_FIR=%d, "normal" implementation\n\n', N_FIR);
+
+figure; 
+% lowpass filter
+subplot(1,2,1);
+plot(freq*2*pi,db(hz),'LineWidth',1.2),grid
+title('Magnitude response of lowpass FIR filter'),
+xlabel('Normalized frequency $\Omega$','Interpreter', 'latex');
+ylabel('$|H(e^{j\Omega})|$ in dB','Interpreter', 'latex');
+axis([0 pi -50 10]);
+
+% highpass filter
+subplot(1,2,2);
+plot(freq*2*pi,db(1-abs(hz)),'LineWidth',1.2),grid
+title('Magnitude response of highpass FIR filter'),
+xlabel('Normalized frequency $\Omega$','Interpreter', 'latex');
+ylabel('$|H(e^{j\Omega})|$ in dB','Interpreter', 'latex');
+axis([0 pi -50 10]);
+
+
+% MAC = F_DSP / F_S / N_FIR
+MAC = F_DSP/Fs/N_FIR; % = 18.68 -> 18 cycles per clock cycle of dsp
+
+%% Interpolation/Decimation/Kernelfilter
+% add here the design of the decimation/interpolation filter and of the KERNEL filter
+M = 5;
+
+% Decimation Filter = Interpolation Filter
+[nd,fo,ao,w] = firpmord([fpass Fs/M-fstop],[1 0],[delta_pass/3 delta_stop],Fs);
+% Update filter coefficents to 30 and filter order to 29
+nd = M*ceil((nd+1)/M)-1;      % nd = 26 -> 27 taps -> 30 taps, filter order 29
+h_ = firpm(nd,fo,ao,w); 
+
+% Kernel Filter with 10kHz
+[nk,fk,ak,wk] = firpmord([fpass fstop],[1 0],[delta_pass/3 delta_stop],Fs/M);
+hk = firpm(nk,fk,ak,wk); 
+
+
+    % Frequency responses on a common axis (0 ... Fs/2)
+    f  = linspace(0, Fs/2, 8192);
+    Hd = freqz(hd, 1, f, Fs);         % decimation / interpolation (rate Fs)
+    Hk = freqz(hk, 1, f, Fs/M);       % kernel (rate Fs/M), appears periodic
+    % with period Fs/M when seen at rate Fs
+    Hdb = @(H) 20*log10(abs(H) + eps);
+    
+    % Plot
+    figure; hold on; grid on;
+    plot(f/1e3, Hdb(Hd),        'b',   'LineWidth', 1.5);
+    plot(f/1e3, Hdb(Hk),        'r',   'LineWidth', 1.5);
+    plot(f/1e3, Hdb(Hd.*Hk.*Hd),'g', 'LineWidth', 1.5);   % total cascade
+    
+    % Mark band edges
+    xline(fpass/1e3,       ':', 'f_{pass}');
+    xline(fstop/1e3,       ':', 'f_{stop}');
+    xline((Fs/M-fstop)/1e3,':', 'F_s/M - f_{stop}');
+    xline(Fs/M/2/1e3,      ':', 'F_s/(2M)');
+    
+    ylim([-100 5]);
+    xlabel('Frequency in kHz');
+    ylabel('Magnitude in dB');
+    title('Multi-rate filter structure: decimation, kernel and interpolation filter');
+    legend('Decimation = interpolation filter (F_s)', ...
+        sprintf('Kernel filter (F_s/M = %g kHz, repeats)', Fs/M/1e3), ...
+        'Total cascade H_{dec}\cdot H_{kernel}\cdot H_{int}', ...
+        'Location','northeast');
+
+
+%disp(' ');
+%disp('add here the design of the decimation/interpolation filter and of the KERNEL filter'),
+%disp(' ');
+
+%disp('write the coefficients and the delays to a file in a similar way as for the "normal"');
+%disp('FIR filter below');
+
+
+
+
+
+
+%% Polyphases
+%{
+hdp = [hd zeros(1, M*ceil(numel(hd)/M) - numel(hd))];     % 27 -> 30 taps interpolator with zeros
+for lam = 0:M-1
+    Hpoly(lam+1,:) = hdp(lam+1:M:end);                    % 5 sets x 6 taps
+end
+
+% Verification 1: polyphase decimator == filter, then downsample
+x  = randn(1,2000);
+y_ref = filter(hd,1,x);  y_ref = y_ref(1:M:end);
+y_pp  = zeros(1,floor(numel(x)/M));
+for n = 1:numel(y_pp)
+    s = 0;
+    for lam = 0:M-1
+        idx = (n-1)*M + 1 - lam;                          % x[nM - lam]
+        xl  = zeros(1,6);                                 % branch delay line
+        for m = 0:5
+            k = idx - m*M; if k>=1, xl(m+1) = x(k); end
+        end
+        s = s + Hpoly(lam+1,:)*xl.';
+    end
+    y_pp(n) = s;
+end
+max(abs(y_ref(1:numel(y_pp)) - y_pp))                     % ~1e-15
+%}
+  
+
+
+%% Computational effort 
+%% Effort (pass-band ripple split across 3 filters: dpass/3)
+L = (2/3) * log10(3 / (10*delta_pass*delta_stop));      % common factor
+
+E_NFIR = N_FIR * Fs
+E_DecInt = L * (Fs / ((Fs/M - fstop) - fpass)) * (Fs/M)
+E_kernel = L * ((Fs/M) / (fstop - fpass))      * (Fs/M)
+
+% Total effort (2 x Dec/Int + kernel)
+E_ges = L * ( 2*Fs / ((Fs/M) - fpass - fstop) + (Fs/M) / (fstop - fpass) ) * (Fs/M)
+
+%% Rewritten total effort as a function of M
+E_ges_M = @(M) L .* ( 2*Fs ./ (Fs - M.*(fpass + fstop)) ...
+    + Fs ./ (M.^2 .* (fstop - fpass)) ) .* Fs
+
+%% Minimum effort: M_min from the roots of the derivative polynomial
+% M^3*(fstop^2 - fpass^2) - M^2*(fpass+fstop)^2 + M*2*Fs*(fpass+fstop) - Fs^2 = 0
+p = [ (fstop^2 - fpass^2), ...
+    -(fpass + fstop)^2, ...
+    2*Fs*(fpass + fstop), ...
+    -Fs^2 ];
+M_roots = roots(p);
+
+% Keep only real, positive roots (and typically M < Fs/(fpass+fstop))
+M_min = M_roots(abs(imag(M_roots)) < 1e-9 & real(M_roots) > 0);
+M_min = real(M_min)
+
+% Effort at the optimum (in practice, round M to a valid integer and compare)
+E_min = E_ges_M(M_min)
+
+% Group delay
+t_single = N_FIR /2;
+t_decint = nd/2 *2;
+t_kernel = nk/2 *5; % *5 because M =5 and we want to compute the delay on Fs
+t_multi = t_decint + t_kernel;
+
+
+%% Polyphase export
+% quantize to 1Q15 and write to file
+q = @(h) round(h*2^15);        % check that no coefficient reaches +/-1.0
+write_coeff('dec_kernel_int.h', 'H_filt_50', q(Hpoly(1,:)));   % lambda = 0
+write_coeff('dec_kernel_int.h', 'H_filt_51', q(Hpoly(2,:)));   % lambda = 1
+write_coeff('dec_kernel_int.h', 'H_filt_52', q(Hpoly(3,:)));   % lambda = 2
+write_coeff('dec_kernel_int.h', 'H_filt_53', q(Hpoly(4,:)));   % lambda = 3
+write_coeff('dec_kernel_int.h', 'H_filt_54', q(Hpoly(5,:)));   % lambda = 4
+write_coeff('dec_kernel_int.h', 'H_kern',    q(hk));           % 117 taps
+
+
+%%
+% this is provided in order to let the script end correctly, remove later
+MMmin = 0;
+N_FIR_Dec_Int = 0;
+N_FIR_kernel_MM = 0;
+
+%---------------------------------------------------------------------------
+% write to file !
+% create header file and info
+filename = 'FIR_normal_WS26_MOODLE.h';
+file_ID = fopen(filename, 'w');		% generate include-file
+fprintf(file_ID, '//------------------------------------------- \n');
+fprintf(file_ID, '// designed with -- dec_kernel_int.m -- \n', Fs );
+fprintf(file_ID, '// Fs = %6.2f\n', Fs );
+fprintf(file_ID, '// fstop = %6.2f\n', fstop);
+fprintf(file_ID, '// fpass = %6.2f\n', fpass);
+fprintf(file_ID, '// delta_pass = %6.2f\n', delta_pass);
+fprintf(file_ID, '// delta_stop_dB = %6.2f\n', delta_stop_dB);
+fprintf(file_ID, '// N_FIR = %d\n',  N_FIR);
+fprintf(file_ID, '//------------------------------------------- \n');
+
+fprintf(file_ID, '#define N_delays_FIR_dki_normal %d\n', length(b_FIR));
+fprintf(file_ID, '\n// DEC FILTER\n');
+fprintf(file_ID, 'short H_filt_FIR_normal[N_delays_FIR_dki_normal]; \n');
+
+write_coeff(file_ID, 'b_FIR_normal', b_FIR, length(b_FIR));
+fclose(file_ID);
+
+%---------------------------------------------------------------------------
+% DEC, KERNEL, INT filter : write to file !
+% create header file and info
+filename = 'dec_kernel_int_WS20_EMIL.h';
+file_ID = fopen(filename, 'w');		% generate include-file
+fprintf(file_ID, '//------------------------------------------- \n');
+fprintf(file_ID, '// designed with -- dec_kernel_int_WS26_MOODLE.m -- \n', Fs );
+fprintf(file_ID, '// Fs = %6.2f\n', Fs );
+fprintf(file_ID, '// MMmin = %6.2f\n', MMmin );
+fprintf(file_ID, '// fstop = %6.2f\n', fstop);
+fprintf(file_ID, '// fpass = %6.2f\n', fpass);
+fprintf(file_ID, '// delta_pass = %6.2f\n', delta_pass);
+fprintf(file_ID, '// delta_stop_dB = %6.2f\n', delta_stop_dB);
+fprintf(file_ID, '// N_FIR = %d, instead two stages with N_FIR_Dec_Int = %d, N_FIR_KERNEL = %d\n', ...
+    N_FIR, N_FIR_Dec_Int, N_FIR_kernel_MM);
+fprintf(file_ID, '//------------------------------------------- \n');
+
+fclose(file_ID);
+
+
+% cut the decimation filter into its 5 polyphases
+% Export kernel filter coefficients
+file_ID = fopen('FIR_kernel_MM.h', 'w');
+fprintf(file_ID, '// Kernel filter coefficients\n');
+fprintf(file_ID, '#define N_kernel %d\n', numel(hk));
+fprintf(file_ID, 'short H_kernel[N_kernel] = {');
+fprintf(file_ID, '%d, ', round(hk * 2^15));
+fprintf(file_ID, '};\n');
+fclose(file_ID);
+
+
+% cut the decimation filter into it's 5 polyphases
+file_ID = fopen('FIR_dec_poly.h', 'w');
+fprintf(file_ID, '// Decimation/interpolation polyphase filter coefficients\n');
+fprintf(file_ID, '#define M_DEC_INT %d\n', M);
+fprintf(file_ID, '#define N_DEC_INT %d\n', numel(hd));
+for k=1:M
+    phaseCoefficients = hd(k:M:end);
+    fprintf(file_ID, '\n// Polyphase %d\n', k);
+    fprintf(file_ID, 'short H_filt_FIR_phase_%d[%d] = {', k, numel(phaseCoefficients));
+    fprintf(file_ID, '%d, ', round(phaseCoefficients * 2^15));
+    fprintf(file_ID, '};\n');
+end
+fclose(file_ID);

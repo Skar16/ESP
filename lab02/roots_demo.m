@@ -5,9 +5,9 @@
 % demo for finding M_opt
 clear
 close all
-Fs = 8000;
-fpass = 1000;
-fstop = 1100;
+Fs = 50e3;
+fpass = 2700;
+fstop = 2900;
 
 a = fstop^2 - fpass^2;
 b = -(fpass + fstop)^2;
